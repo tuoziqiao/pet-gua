@@ -7,14 +7,15 @@
 
   音乐与歌词 · 待办与日程 · 邮件提醒 · AI 额度
 
-  [功能介绍](#功能介绍) · [开始使用](#开始使用) · [打包](#打包) · [数据与权限](#数据与权限)
 </div>
 
 呱呱是一款 Windows 桌面信息岛：平时收在屏幕顶部，鼠标靠近时展开。它使用 Rust 和 egui 构建，无需 Electron。
 
-<img src="docs/images/weather.png" alt="页面示例" />
 
-<p align="center"><sub>早期界面截图；显示内容和布局会随版本及个人设置变化。</sub></p>
+<div align="center">
+  <img src="docs/images/weather.png" alt="页面示例" />
+</div>
+
 
 ## 桌面伙伴
 
@@ -23,8 +24,6 @@
 麻薯桌宠拥有与信息岛吉祥物对应的表情，并会根据音乐、天气、专注和空闲等状态独立互动；在桌宠设置页可以逐项预览表情和动作。
 
 身体动作包括待机呼吸、点击弹跳、拖拽变形、伸懒腰、靠近回应、听歌摇摆与打盹醒来，可在桌宠设置页关闭或预览。
-
-麻薯桌宠的轮廓与胶囊眼参数移植自 [Aora Bot](https://github.com/sam70361/aora-bot)（版本 `164ffa38b3c27a8512e7c09cfceb7cf0c98f5144`）。Powered by Aora Bot。该部分遵循 [Aora Bot License 1.1](docs/AORA-BOT-LICENSE.txt)，使用和分发时请同时遵守其许可条件。
 
 呱呱有 12 组表情动画：**眨眼、得意、脸红、开心、侧目、被夸、比心、偷笑、害羞探头、巡视、探头、左右张望**。
 
