@@ -101,7 +101,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package.ps1
 
 ## 连接服务
 
-- **邮箱**：支持 QQ、163、126、腾讯企业邮、iCloud、Gmail 和 Outlook／Microsoft 365。通常需要开启 IMAP 并使用授权码或应用专用密码；Outlook 使用微软浏览器授权，构建时还需配置微软应用客户端 ID，详见 [Outlook 接入说明](docs/OUTLOOK-SETUP.md)。
+- **邮箱**：支持 QQ、163、126、腾讯企业邮、iCloud 和 Gmail。通常需要开启 IMAP 并使用授权码或应用专用密码。
 - **工作日历**：支持飞书、钉钉和企业微信，远程日历以只读方式同步；本机日程保存在本地。连接时需要相应平台提供的日历账号和凭据。
 - **AI 额度**：可识别部分本机已登录账号，Grok Bot 和 Gemini 也提供各自的连接方式。可用的额度字段取决于服务、订阅和登录状态。
 
@@ -111,5 +111,5 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package.ps1
 
 - 设置、待办、饮水记录、本机日程和连接元数据默认保存在 `%APPDATA%\gua`。可通过环境变量 `GUA_DATA_DIR` 指定其他数据目录。
 - 天气启用时使用 Open-Meteo 获取所选位置的天气；自动定位通过公网 IP 推测位置，可在设置中关闭天气或改选城市。城市及最近天气缓存在本机。
-- 邮箱和日历密码使用 Windows 凭据管理器保存；Outlook 刷新令牌和独立 Gemini 会话使用当前 Windows 用户的 DPAPI 加密。
+- 邮箱和日历密码使用 Windows 凭据管理器保存；独立 Gemini 会话使用当前 Windows 用户的 DPAPI 加密。
 - 置物架记录文件路径，不复制文件正文。启用邮箱、日历、AI 额度或歌词等功能时，程序会访问对应的第三方服务。

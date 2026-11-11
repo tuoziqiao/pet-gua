@@ -1,15 +1,13 @@
 //! 邮件账号、IMAP 收取与正文解析。
 //!
 //! 轻量化约束：只用 Rust 原生 crate（`imap` + `native-tls` + `mailparse`），
-//! 不引 Node/Go/Electron。密码进 Windows 凭据管理器，Outlook 令牌由 DPAPI 加密，
+//! 不引 Node/Go/Electron。密码进 Windows 凭据管理器，
 //! 账号清单只存「邮箱 + 类型 + 是否监控」，不存密码。
 //!
 //! 收信优先 `Session::idle()` 长连接；服务器不支持 IDLE 时退回轮询（60/120/300 秒）。
 //! 正文只在内存里解析，不落盘、不缓存。
 
 use std::collections::HashMap;
-
-pub mod outlook;
 
 pub const SERVICE: &str = "gua.Mail";
 
@@ -23,7 +21,6 @@ pub enum Provider {
     Exmail,
     ICloud,
     Gmail,
-    Outlook,
 }
 
 impl Default for Provider {
@@ -33,14 +30,13 @@ impl Default for Provider {
 }
 
 impl Provider {
-    pub const ALL: [Provider; 7] = [
+    pub const ALL: [Provider; 6] = [
         Provider::Qq,
         Provider::Mail163,
         Provider::Mail126,
         Provider::Exmail,
         Provider::ICloud,
         Provider::Gmail,
-        Provider::Outlook,
     ];
 
     pub fn key(self) -> &'static str {
@@ -51,7 +47,6 @@ impl Provider {
             Provider::Exmail => "exmail",
             Provider::ICloud => "icloud",
             Provider::Gmail => "gmail",
-            Provider::Outlook => "outlook",
         }
     }
 
@@ -63,7 +58,6 @@ impl Provider {
             Provider::Exmail => "腾讯企业邮",
             Provider::ICloud => "iCloud 邮箱",
             Provider::Gmail => "Gmail",
-            Provider::Outlook => "Outlook / Microsoft 365",
         }
     }
 
@@ -75,7 +69,6 @@ impl Provider {
             Provider::Exmail => "imap.exmail.qq.com",
             Provider::ICloud => "imap.mail.me.com",
             Provider::Gmail => "imap.gmail.com",
-            Provider::Outlook => "outlook.office365.com",
         }
     }
 
@@ -96,7 +89,6 @@ impl Provider {
             Provider::Exmail => "1. 登录腾讯企业邮网页版，在「设置」→「收发信设置」检查 IMAP/SMTP 服务。\n2. 常见网页版在「设置」→「邮箱绑定」→「客户端专用密码」→「生成新密码」获取密码；启用安全登录后须使用专用密码。\n3. 企业版本和管理员策略可能不同。找不到入口或服务被禁用时，请让企业管理员确认客户端接入方式，不要照搬 QQ 邮箱的路径。",
             Provider::ICloud => "1. 登录 Apple 账户页面，进入「登录和安全」→「App 专用密码」。\n2. 选择「生成 App 专用密码」，按提示填写名称并完成验证；账户需已开启双重认证。\n3. 邮箱栏填写完整的 iCloud 邮箱地址，下方填写刚生成的 App 专用密码，不是 Apple 账户密码。",
             Provider::Gmail => concat!("1. 登录 Google 账户，进入「安全性与登录」→「您的 Google 账号登录选项」→「开启两步验证」，按提示完成设置。\n2. 打开下方「应用专用密码」页面，输入应用名称（例如：",env!("GUA_BRAND_DISPLAY_NAME"),"）并创建，复制生成的 16 位应用专用密码。\n3. 邮箱栏填完整 Gmail 地址，下方填应用专用密码，不是 Google 登录密码。若没有创建入口，请检查组织账号限制、高级保护或仅使用安全密钥的验证设置。"),
-            Provider::Outlook => concat!("1. Outlook.com、Hotmail、Live 及 Microsoft 365 邮箱均可使用；个人邮箱需先在 Outlook 网页设置中开启 IMAP。\n2. 填写邮箱后点击浏览器登录，在微软页面完成登录和授权；工作或学校账号可能需要管理员允许。\n3. 微软的 IMAP 授权包含读取和修改邮件的权限；",env!("GUA_BRAND_DISPLAY_NAME"),"只读取收件箱，不修改邮件。"),
         }
     }
 
@@ -111,10 +103,6 @@ impl Provider {
                 "打开应用专用密码",
                 "https://myaccount.google.com/apppasswords",
             ),
-            Provider::Outlook => (
-                "打开个人 Outlook 的 IMAP 设置",
-                "https://outlook.live.com/mail/0/options/mail/forwarding",
-            ),
         }
     }
 
@@ -125,7 +113,6 @@ impl Provider {
             "exmail" => Provider::Exmail,
             "icloud" => Provider::ICloud,
             "gmail" => Provider::Gmail,
-            "outlook" => Provider::Outlook,
             _ => Provider::Qq,
         }
     }
@@ -167,6 +154,9 @@ pub fn decode_accounts(raw: &[u8]) -> Vec<Account> {
         .filter_map(|a| {
             let email = a.get("email")?.as_str()?.trim().to_string();
             if email.is_empty() {
+                return None;
+            }
+            if a.get("provider").and_then(|p| p.as_str()) == Some("outlook") {
                 return None;
             }
             Some(Account {
@@ -706,7 +696,7 @@ mod net {
     //! 而网易要求 greeting → ID → LOGIN 的顺序，所以这里手工读问候、发 ID，
     //! 再把「已经读掉的开头字节」原样交回给 imap。
 
-    use super::{Account, Provider};
+    use super::Account;
     use imap::extensions::idle::SetReadTimeout;
     use native_tls::{TlsConnector, TlsStream};
     use std::io::{Read, Write};
@@ -849,47 +839,12 @@ mod net {
         authenticate(client, account, password)
     }
 
-    struct Xoauth2<'a> {
-        email: &'a str,
-        token: &'a str,
-    }
-    impl imap::Authenticator for Xoauth2<'_> {
-        type Response = Vec<u8>;
-        fn process(&self, challenge: &[u8]) -> Self::Response {
-            if challenge.is_empty() {
-                format!("user={}\x01auth=Bearer {}\x01\x01", self.email, self.token).into_bytes()
-            } else {
-                Vec::new()
-            }
-        }
-    }
-
     pub(super) fn authenticate<T: Read + Write>(
         client: imap::Client<T>,
         account: &Account,
         credential: &str,
     ) -> Result<imap::Session<T>, String> {
-        if account.provider == Provider::Outlook {
-            if !super::outlook::validate_email(&account.email)
-                || credential.is_empty()
-                || credential.chars().any(char::is_control)
-            {
-                return Err("Outlook 登录信息无效，请重新授权".into());
-            }
-            client
-                .authenticate(
-                    "XOAUTH2",
-                    &Xoauth2 {
-                        email: &account.email,
-                        token: credential,
-                    },
-                )
-                .map_err(|_| "Outlook 登录失败，请检查 IMAP 开关、管理员策略或重新授权".into())
-        } else {
-            client
-                .login(account.email.clone(), credential)
-                .map_err(|(e, _)| login_error(e))
-        }
+        client.login(account.email.clone(), credential).map_err(|(e, _)| login_error(e))
     }
 
     pub fn login_error(e: imap::Error) -> String {
@@ -910,15 +865,7 @@ mod net {
     /// 测试连接：连上、登录、选 INBOX，然后退出。
     pub fn probe(account: &Account, password: &str) -> Result<(), String> {
         let mut session = connect(account, password)?;
-        if account.provider == Provider::Outlook {
-            session
-                .examine("INBOX")
-                .map_err(|_| "无法只读打开 Outlook 收件箱，请检查 IMAP 设置".to_string())?;
-        } else {
-            session
-                .select("INBOX")
-                .map_err(|e| format!("无法打开收件箱：{e}"))?;
-        }
+        session.select("INBOX").map_err(|e| format!("无法打开收件箱：{e}"))?;
         let _ = session.logout();
         Ok(())
     }
@@ -935,7 +882,6 @@ mod service {
     enum Cmd {
         Sync(Vec<Account>, u32),
         Test(Account, String),
-        Restart(String),
     }
 
     pub struct Service {
@@ -964,12 +910,6 @@ mod service {
             let _ = self.cmd.send(Cmd::Test(account, password));
         }
 
-        pub fn restart(&self, email: &str) {
-            let _ = self
-                .cmd
-                .send(Cmd::Restart(email.trim().to_ascii_lowercase()));
-        }
-
         pub fn try_recv(&self) -> Option<Event> {
             self.ev.try_recv().ok()
         }
@@ -978,13 +918,12 @@ mod service {
     fn supervisor(cmd_rx: Receiver<Cmd>, ev: Sender<Event>) {
         let mut workers: HashMap<String, (Account, Arc<AtomicBool>, std::thread::JoinHandle<()>)> =
             HashMap::new();
-        let mut wanted: HashMap<String, Account> = HashMap::new();
         let interval = Arc::new(AtomicU64::new(120));
         while let Ok(cmd) = cmd_rx.recv() {
             match cmd {
                 Cmd::Sync(accounts, secs) => {
                     interval.store(secs.clamp(30, 900) as u64, Ordering::Relaxed);
-                    wanted = accounts
+                    let wanted: HashMap<String, Account> = accounts
                         .into_iter()
                         .filter(|a| a.enabled)
                         .map(|a| (key(&a), a))
@@ -1024,13 +963,7 @@ mod service {
                     let _ = std::thread::Builder::new()
                         .name("gua-mail-test".into())
                         .spawn(move || {
-                            let result = if account.provider == Provider::Outlook {
-                                outlook::access(&account.email)
-                                    .map_err(|e| e.message)
-                                    .and_then(|access| net::probe(&account, &access.token))
-                            } else {
-                                net::probe(&account, &password)
-                            };
+                            let result = net::probe(&account, &password);
                             let _ = ev.send(Event::Test {
                                 account: account.email,
                                 ok: result.is_ok(),
@@ -1038,24 +971,7 @@ mod service {
                             });
                         });
                 }
-                Cmd::Restart(email) => {
-                    if let Some((_, flag, _)) = workers.remove(&email) {
-                        flag.store(true, Ordering::Release);
-                    }
-                    if let Some(account) = wanted.get(&email).cloned() {
-                        let stop = Arc::new(AtomicBool::new(false));
-                        let flag = stop.clone();
-                        let events = ev.clone();
-                        let iv = interval.clone();
-                        let work = account.clone();
-                        if let Ok(handle) = std::thread::Builder::new()
-                            .name(format!("gua-mail-{}", account.email))
-                            .spawn(move || worker(work, flag, iv, events))
-                        {
-                            workers.insert(email, (account, stop, handle));
-                        }
-                    }
-                }
+
             }
         }
         for (_, (_, flag, _)) in workers {
@@ -1141,100 +1057,6 @@ mod service {
         }
     }
 
-    #[test]
-    fn outlook_xoauth2_readonly_fetch_delivers_initial_and_new_codes() {
-        use base64::{engine::general_purpose::STANDARD, Engine};
-        use std::io::{BufRead, BufReader, Write};
-        use std::net::{TcpListener, TcpStream};
-
-        fn command(reader: &mut BufReader<TcpStream>, expected: &str) -> String {
-            let mut line = String::new();
-            reader.read_line(&mut line).unwrap();
-            assert!(
-                line.to_ascii_uppercase().contains(expected),
-                "unexpected IMAP command: {line}"
-            );
-            line.split_whitespace().next().unwrap().to_string()
-        }
-        fn fetch(socket: &mut TcpStream, reader: &mut BufReader<TcpStream>, uid: u32, code: &str) {
-            let mut line = String::new();
-            reader.read_line(&mut line).unwrap();
-            assert!(
-                line.contains(&format!("UID FETCH {uid}"))
-                    && line.contains("BODY.PEEK[HEADER]")
-                    && line.contains("BODY.PEEK[TEXT]")
-            );
-            let tag = line.split_whitespace().next().unwrap();
-            let header = b"From: GitHub <test@example.invalid>\r\nSubject: Verification code\r\nContent-Type: text/plain; charset=utf-8\r\n";
-            let body = format!("Your verification code is {code}. It expires in 10 minutes.");
-            write!(socket, "* 1 FETCH (UID {uid} INTERNALDATE \"03-Nov-2026 09:41:00 +0800\" BODY[HEADER] {{{}}}\r\n", header.len()).unwrap();
-            socket.write_all(header).unwrap();
-            write!(
-                socket,
-                " BODY[TEXT] {{{}}}\r\n{body})\r\n{tag} OK fetch done\r\n",
-                body.len()
-            )
-            .unwrap();
-        }
-
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = std::thread::spawn(move || {
-            let (mut socket, _) = listener.accept().unwrap();
-            socket
-                .set_read_timeout(Some(Duration::from_secs(5)))
-                .unwrap();
-            let mut reader = BufReader::new(socket.try_clone().unwrap());
-            write!(socket, "* OK fake Outlook ready\r\n").unwrap();
-            let tag = command(&mut reader, "AUTHENTICATE XOAUTH2");
-            write!(socket, "+ \r\n").unwrap();
-            let mut auth = String::new();
-            reader.read_line(&mut auth).unwrap();
-            assert_eq!(
-                STANDARD.decode(auth.trim()).unwrap(),
-                b"user=person@outlook.com\x01auth=Bearer synthetic-access\x01\x01"
-            );
-            write!(socket, "{tag} OK authenticated\r\n").unwrap();
-            let tag = command(&mut reader, "EXAMINE \"INBOX\"");
-            write!(
-                socket,
-                "* FLAGS (\\Seen)\r\n* 1 EXISTS\r\n{tag} OK [READ-ONLY] inbox open\r\n"
-            )
-            .unwrap();
-            let tag = command(&mut reader, "UID SEARCH ALL");
-            write!(socket, "* SEARCH 11\r\n{tag} OK search done\r\n").unwrap();
-            fetch(&mut socket, &mut reader, 11, "274630");
-            let tag = command(&mut reader, "UID SEARCH UID 12:*");
-            write!(socket, "* SEARCH 12\r\n{tag} OK search done\r\n").unwrap();
-            fetch(&mut socket, &mut reader, 12, "815926");
-            let tag = command(&mut reader, "LOGOUT");
-            write!(socket, "* BYE goodbye\r\n{tag} OK logout\r\n").unwrap();
-        });
-        let account = Account {
-            email: "person@outlook.com".into(),
-            provider: Provider::Outlook,
-            enabled: true,
-        };
-        let mut client = imap::Client::new(TcpStream::connect(address).unwrap());
-        client.read_greeting().unwrap();
-        let mut session = net::authenticate(client, &account, "synthetic-access").unwrap();
-        session.examine("INBOX").unwrap();
-        let (tx, rx) = channel();
-        let mut last = recent(&mut session, &account, &tx).unwrap();
-        assert_eq!(last, 11);
-        fetch_new(&mut session, &account, &mut last, &tx).unwrap();
-        let events: Vec<_> = rx.try_iter().collect();
-        assert!(
-            matches!(&events[0], Event::Mail { item, new: false } if item.code.as_deref() == Some("274630") && item.account == account.email)
-        );
-        assert!(
-            matches!(&events[1], Event::Mail { item, new: true } if item.code.as_deref() == Some("815926") && item.account == account.email)
-        );
-        assert_eq!(last, 12);
-        session.logout().unwrap();
-        server.join().unwrap();
-    }
-
     fn worker(
         account: Account,
         stop: Arc<AtomicBool>,
@@ -1251,32 +1073,7 @@ mod service {
                 account: account.email.clone(),
                 status: Status::Connecting,
             });
-            let credential = if account.provider == Provider::Outlook {
-                outlook::access(&account.email)
-                    .map(|access| {
-                        (
-                            access.token,
-                            Some(
-                                std::time::Instant::now()
-                                    + Duration::from_secs(
-                                        access.expires_in.saturating_sub(60).max(10),
-                                    ),
-                            ),
-                        )
-                    })
-                    .map_err(|e| {
-                        if e.reauthorize {
-                            Status::Auth(e.message)
-                        } else {
-                            Status::Failed(e.message)
-                        }
-                    })
-            } else {
-                secrets::load(&account.email)
-                    .map(|password| (password, None))
-                    .map_err(Status::Auth)
-            };
-            let (password, expires) = match credential {
+            let password = match secrets::load(&account.email).map_err(Status::Auth) {
                 Ok(value) => value,
                 Err(status) => {
                     if stop.load(Ordering::Acquire) {
@@ -1315,11 +1112,7 @@ mod service {
                 let _ = session.logout();
                 return;
             }
-            let selected = if account.provider == Provider::Outlook {
-                session.examine("INBOX")
-            } else {
-                session.select("INBOX")
-            };
+            let selected = session.select("INBOX");
             if selected.is_err() {
                 let _ = ev.send(Event::Status {
                     account: account.email.clone(),
@@ -1363,24 +1156,13 @@ mod service {
                     let _ = session.logout();
                     return;
                 }
-                if expires.is_some_and(|at| std::time::Instant::now() >= at) {
-                    let _ = session.logout();
-                    break;
-                }
                 if idle_supported {
                     // 推送连接出错后重连，不能永久降级为轮询。
                     if wait_for_change(&mut session).is_err() {
                         break;
                     }
                 } else {
-                    let wait = expires
-                        .map(|at| {
-                            at.saturating_duration_since(std::time::Instant::now())
-                                .as_secs()
-                                .max(1)
-                        })
-                        .unwrap_or(u64::MAX)
-                        .min(interval.load(Ordering::Relaxed));
+                    let wait = interval.load(Ordering::Relaxed);
                     if sleep_stop(&stop, wait) {
                         let _ = session.logout();
                         return;
@@ -1745,8 +1527,8 @@ mod tests {
     }
 
     #[test]
-    fn provider_presets_cover_seven_kinds() {
-        assert_eq!(Provider::ALL.len(), 7);
+    fn provider_presets_cover_six_kinds() {
+        assert_eq!(Provider::ALL.len(), 6);
         assert_eq!(Provider::parse("gmail"), Provider::Gmail);
         assert_eq!(Provider::Gmail.host(), "imap.gmail.com");
         assert_eq!(Provider::Gmail.port(), 993);
@@ -1762,7 +1544,14 @@ mod tests {
         assert!(Provider::Mail163.needs_id() && Provider::Mail126.needs_id());
         assert!(!Provider::Qq.needs_id());
         assert_eq!(Provider::parse("exmail").host(), "imap.exmail.qq.com");
-        assert_eq!(Provider::parse("outlook").host(), "outlook.office365.com");
+    }
+
+    #[test]
+    fn old_outlook_accounts_are_not_loaded_as_qq() {
+        let raw = br#"[{"email":"old@example.com","provider":"outlook","enabled":true},{"email":"keep@qq.com","provider":"qq","enabled":true}]"#;
+        assert_eq!(decode_accounts(raw), vec![Account {
+            email: "keep@qq.com".into(), provider: Provider::Qq, enabled: true,
+        }]);
     }
 
     #[test]

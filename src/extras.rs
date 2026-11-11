@@ -2419,7 +2419,7 @@ impl App {
                         settings_card(ui,|ui|{
                             if self.mail.accounts.is_empty(){ui.label(egui::RichText::new("还没有邮箱。在下面添加，保存后自动连接。").size(12.0).color(settings_color(ctx,Color32::from_gray(195),Color32::from_gray(60))));}
                             let total=self.mail.accounts.len();
-                            let(mut changed,mut remove,mut test,mut reauthorize)=(false,None,None,None);
+                            let(mut changed,mut remove,mut test)=(false,None,None);
                             for i in 0..total{
                                 let(email,provider)=(self.mail.accounts[i].email.clone(),self.mail.accounts[i].provider);
                                 let status=self.mail.status_of(&email).label();
@@ -2430,7 +2430,6 @@ impl App {
                                 ui.horizontal(|ui|{
                                     if ui.add_sized([66.0,30.0],egui::Button::new("测试")).clicked(){test=Some(i);}
                                     if ui.add_sized([66.0,30.0],egui::Button::new("删除")).clicked(){remove=Some(i);}
-                                    if provider==crate::mail::Provider::Outlook && ui.add_enabled(self.mail.outlook_login.is_none(),egui::Button::new("重新授权")).clicked(){reauthorize=Some(email.clone());}
                                     ui.add_space(8.0);
                                     ui.label(egui::RichText::new("启用").size(12.0).color(settings_color(ctx,Color32::from_gray(190),Color32::from_gray(65))));
                                     if switch(ui,&mut on){self.mail.accounts[i].enabled=on;changed=true;}
@@ -2439,23 +2438,16 @@ impl App {
                             if changed{self.mail_accounts_changed();}
                             if let Some(i)=remove{
                                 let account=self.mail.accounts[i].clone();let email=account.email.clone();
-                                if self.mail.outlook_login.as_ref().is_some_and(|login|login.email().eq_ignore_ascii_case(&email)){self.mail.outlook_login=None;}
-                                let removed=if account.provider==crate::mail::Provider::Outlook{crate::mail::outlook::forget(&email)}else{crate::mail::secrets::delete(&email);Ok(())};
-                                match removed{
-                                    Ok(())=>{self.mail.accounts.remove(i);self.mail.status.remove(&email.to_ascii_lowercase());self.mail.recent.retain(|item|!item.account.eq_ignore_ascii_case(&email));if self.mail.open_uid.as_ref().is_some_and(|(account,_)|account.eq_ignore_ascii_case(&email)){self.mail.open_uid=None;}if self.mail.reading.as_ref().is_some_and(|item|item.account.eq_ignore_ascii_case(&email)){self.mail.reading=None;}self.mail.note=format!("{email}：已移除，安全凭据已删除");self.mail_accounts_changed();}
-                                    Err(error)=>self.mail.note=error,
-                                }
+                                crate::mail::secrets::delete(&email);
+                                self.mail.accounts.remove(i);self.mail.status.remove(&email.to_ascii_lowercase());self.mail.recent.retain(|item|!item.account.eq_ignore_ascii_case(&email));if self.mail.open_uid.as_ref().is_some_and(|(account,_)|account.eq_ignore_ascii_case(&email)){self.mail.open_uid=None;}if self.mail.reading.as_ref().is_some_and(|item|item.account.eq_ignore_ascii_case(&email)){self.mail.reading=None;}self.mail.note=format!("{email}：已移除，安全凭据已删除");self.mail_accounts_changed();
                             }
                             if let Some(i)=test{
                                 let account=self.mail.accounts[i].clone();
-                                if account.provider==crate::mail::Provider::Outlook{
-                                    self.mail.testing=Some(account.email.clone());self.mail.note=format!("{}：正在测试连接…",account.email);self.pending.push(Cmd::MailTest(account,String::new()));
-                                }else{match crate::mail::secrets::load(&account.email){
+                                match crate::mail::secrets::load(&account.email){
                                     Ok(pass)=>{self.mail.testing=Some(account.email.clone());self.mail.note=format!("{}：正在测试连接…",account.email);self.pending.push(Cmd::MailTest(account,pass));}
                                     Err(e)=>self.mail.note=format!("{}：{e}",account.email),
-                                }}
+                                }
                             }
-                            if let Some(email)=reauthorize{self.start_outlook_login(email);}
                         });
                         settings_label(ui,"添加邮箱");
                         settings_card(ui,|ui|{
@@ -2466,8 +2458,7 @@ impl App {
                                 });
                             });
                             ui.add_space(5.0);
-                            let is_outlook=self.mail.form.provider==crate::mail::Provider::Outlook;
-                            ui.label(egui::RichText::new(if is_outlook{"通过微软授权"}else{"获取授权码或专用密码"}).size(12.5).strong());
+                            ui.label(egui::RichText::new("获取授权码或专用密码").size(12.5).strong());
                             ui.add(egui::Label::new(egui::RichText::new(self.mail.form.provider.hint()).size(12.0).color(settings_color(ctx,Color32::from_gray(200),Color32::from_gray(55)))).wrap());
                             let (label,url)=self.mail.form.provider.setup_link();
                             if ui.link(label).clicked(){self.pending.push(Cmd::OpenUrl(url.into()));}
@@ -2477,10 +2468,6 @@ impl App {
                                 ui.add_sized([56.0,30.0],egui::Label::new(egui::RichText::new("邮箱").size(13.0)));
                                 ui.add_sized([input_width,30.0],egui::TextEdit::singleline(&mut self.mail.form.email).hint_text("输入邮箱地址"));
                             });
-                            if is_outlook{
-                                if ui.add_enabled(self.mail.outlook_login.is_none(),egui::Button::new("浏览器登录并添加")).clicked(){self.start_outlook_login(self.mail.form.email.clone());}
-                                ui.label(egui::RichText::new("微软登录凭据由 Windows 加密保存在本机。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
-                            }else{
                             ui.horizontal(|ui|{
                                 ui.add_sized([56.0,30.0],egui::Label::new(egui::RichText::new("授权码").size(13.0)));
                                 ui.add_sized([input_width,30.0],egui::TextEdit::singleline(&mut self.mail.form.password).password(!self.mail.form.show).hint_text("输入邮箱授权码"));
@@ -2491,7 +2478,6 @@ impl App {
                                     let email=self.mail.form.email.trim().to_string();
                                     if !email.contains('@'){self.mail.note="请先填邮箱地址".into();}
                                     else if self.mail.form.password.is_empty(){self.mail.note="请先填授权码（不是邮箱登录密码）".into();}
-                                    else if self.mail.accounts.iter().any(|a|a.email.eq_ignore_ascii_case(&email)&&a.provider==crate::mail::Provider::Outlook){self.mail.note="此邮箱已作为 Outlook 添加，请先删除原账号".into();}
                                     else{
                                         self.mail.testing=Some(email.clone());
                                         self.mail.note=format!("{email}：正在测试连接…");
@@ -2502,7 +2488,6 @@ impl App {
                                     let email=self.mail.form.email.trim().to_string();
                                     if !email.contains('@'){self.mail.note="请先填邮箱地址".into();}
                                     else if self.mail.form.password.is_empty(){self.mail.note="请先填授权码（不是邮箱登录密码）".into();}
-                                    else if self.mail.accounts.iter().any(|a|a.email.eq_ignore_ascii_case(&email)&&a.provider==crate::mail::Provider::Outlook){self.mail.note="此邮箱已作为 Outlook 添加，请先删除原账号".into();}
                                     else{
                                         match crate::mail::secrets::save(&email,&self.mail.form.password){
                                             Ok(())=>{
@@ -2518,8 +2503,6 @@ impl App {
                                 }
                             });
                             ui.label(egui::RichText::new("授权码存储在 Windows 凭据管理器中。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
-                            }
-                            if self.mail.outlook_login.is_some(){ui.horizontal(|ui|{ui.spinner();ui.label("等待微软登录或收件箱连接…");if ui.button("取消登录").clicked(){self.mail.outlook_login=None;self.mail.note="微软登录已取消".into();}});ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));}
                             ui.label(egui::RichText::new("图片中的验证码请在邮箱查看。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
                             if !self.mail.note.is_empty(){ui.add_space(3.0);ui.add(egui::Label::new(egui::RichText::new(&self.mail.note).size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75)))).wrap());}
                         });

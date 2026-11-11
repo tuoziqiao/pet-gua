@@ -797,7 +797,6 @@ impl eframe::App for Shell {
                     );
                 }
                 Cmd::MailTest(account, password) => self.mail.test(account, password),
-                Cmd::MailRestart(email) => self.mail.restart(&email),
                 Cmd::CalendarTest(cfg, password) => self.cal.test(cfg, password),
                 Cmd::CalendarSync => self.cal.sync_now(),
                 Cmd::CalendarMonth(month) => self.cal.view_month(month),

@@ -183,7 +183,6 @@ pub enum Cmd {
     /// 测试某个邮箱的连接（授权码只在内存里传给工作线程）。
     MailTest(mail::Account, String),
     /// 重新启动指定邮箱的收信线程，使更新后的授权立即生效。
-    MailRestart(String),
     /// v0.5.6：用临时密码试连日历，成功后才允许落盘。
     CalendarTest(calendar::Config, String),
     /// 让外壳立即同步一次日历。
@@ -404,7 +403,6 @@ pub(crate) struct MailState {
     /// 设置页里「测试连接」的结果。
     pub note: String,
     pub testing: Option<String>,
-    pub outlook_login: Option<mail::outlook::Login>,
     pub form: MailForm,
     /// 面板里点开的邮件（账号 + uid，避免两个账号 uid 撞车）。
     pub open_uid: Option<(String, u32)>,
@@ -898,91 +896,6 @@ impl App {
     pub fn open_mail_settings(&mut self) {
         self.settings_tab = 7;
         self.open_settings();
-    }
-
-    pub(crate) fn start_outlook_login(&mut self, email: String) {
-        if self.mail.outlook_login.is_some() {
-            return;
-        }
-        let email = email.trim().to_string();
-        if !mail::outlook::validate_email(&email) {
-            self.mail.note = "请先填写有效的 Outlook 邮箱地址".into();
-            return;
-        }
-        if self
-            .mail
-            .accounts
-            .iter()
-            .any(|a| a.email.eq_ignore_ascii_case(&email) && a.provider != mail::Provider::Outlook)
-        {
-            self.mail.note = "此邮箱已作为其他服务添加，请先删除原账号".into();
-            return;
-        }
-        match mail::outlook::Login::start(email) {
-            Ok((login, url)) => {
-                self.mail.outlook_login = Some(login);
-                self.mail.note = format!(
-                    "请在浏览器完成微软登录和授权，{}会测试收件箱",
-                    crate::brand::DISPLAY_NAME
-                );
-                self.pending.push(Cmd::OpenUrl(url));
-            }
-            Err(error) => self.mail.note = error,
-        }
-    }
-
-    fn outlook_tick(&mut self) {
-        let result = self
-            .mail
-            .outlook_login
-            .as_ref()
-            .and_then(|login| login.poll());
-        let Some(result) = result else {
-            return;
-        };
-        self.mail.outlook_login = None;
-        match result {
-            Ok(connected) => {
-                let email = connected.email.clone();
-                if self.mail.accounts.iter().any(|a| {
-                    a.email.eq_ignore_ascii_case(&email) && a.provider != mail::Provider::Outlook
-                }) {
-                    self.mail.note = "此邮箱已作为其他服务添加，请先删除原账号".into();
-                    return;
-                }
-                if let Err(error) = connected.save() {
-                    self.mail.note = error;
-                    return;
-                }
-                let existing = self
-                    .mail
-                    .accounts
-                    .iter()
-                    .find(|a| a.email.eq_ignore_ascii_case(&email));
-                let was_present = existing.is_some();
-                let enabled = existing.is_none_or(|a| a.enabled);
-                if !was_present {
-                    self.mail.accounts.push(mail::Account {
-                        email: email.clone(),
-                        provider: mail::Provider::Outlook,
-                        enabled: true,
-                    });
-                }
-                self.mail.note = format!(
-                    "{email}：{}",
-                    if enabled {
-                        "授权成功，正在连接…"
-                    } else {
-                        "授权成功，邮箱已暂停"
-                    }
-                );
-                self.mail_accounts_changed();
-                if was_present {
-                    self.pending.push(Cmd::MailRestart(email));
-                }
-            }
-            Err(error) => self.mail.note = error,
-        }
     }
 
     /// v0.5.6：日历服务推来的事件。失败不弹窗，只累计次数（连续两次才显示红字）。
@@ -1876,7 +1789,6 @@ impl App {
         self.last_t = Some(env.t);
         self.t = env.t;
         self.quota_tick();
-        self.outlook_tick();
         self.current_hour = env.hour();
         self.system_idle = env.idle_seconds;
         self.work_area_x = env.work_area_x;

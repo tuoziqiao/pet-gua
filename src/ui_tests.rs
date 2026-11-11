@@ -8279,15 +8279,15 @@ fn mailbox_large_code_card_preserves_copy_and_identifies_source() {
 }
 
 #[test]
-fn outlook_mail_event_displays_and_copies_the_received_code() {
+fn mail_event_displays_and_copies_the_received_code() {
     let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut h = H::new();
     h.app.settings.mail_enabled = true;
     h.app.settings.mail_code = true;
-    let email = "person@outlook.com";
+    let email = "person@qq.com";
     h.app.mail.accounts.push(crate::mail::Account {
         email: email.into(),
-        provider: crate::mail::Provider::Outlook,
+        provider: crate::mail::Provider::Qq,
         enabled: true,
     });
     let parsed=crate::mail::parse_message(b"From: GitHub <test@example.invalid>\r\nSubject: Verification code\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nYour verification code is 815926.");

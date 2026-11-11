@@ -1825,13 +1825,7 @@ impl App {
                     match self.mail.status_of(&self.mail.accounts[0].email) {
                         mail::Status::Ready => "邮箱已连接".into(),
                         mail::Status::Connecting => "正在连接…".into(),
-                        mail::Status::Auth(_) => {
-                            if self.mail.accounts[0].provider == mail::Provider::Outlook {
-                                "需要重新授权".into()
-                            } else {
-                                "需要授权码".into()
-                            }
-                        }
+                        mail::Status::Auth(_) => "需要授权码".into(),
                         mail::Status::Failed(_) => "连接失败".into(),
                         mail::Status::Idle => "等待连接".into(),
                     }
