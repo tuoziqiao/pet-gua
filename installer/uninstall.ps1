@@ -21,7 +21,7 @@ $runKey='HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $run=(Get-ItemProperty -LiteralPath $runKey -ErrorAction SilentlyContinue).gua
 if($run -and [string]::Equals($run.Trim('"'),$exePath,[StringComparison]::OrdinalIgnoreCase)){Remove-ItemProperty -Path $runKey -Name gua -ErrorAction SilentlyContinue}
 Remove-Item -LiteralPath $key -ErrorAction SilentlyContinue
-$files=@($exeName,'THIRD_PARTY_NOTICES.txt','LICENSE','uninstall.ps1')
+$files=@($exeName,'THIRD_PARTY_NOTICES.txt','LICENSE','DESKTOP-PET-ASSETS.md','uninstall.ps1')
 if($registered.BrandBackup -eq 'gua-previous.exe' -and $exeName -ne 'gua-previous.exe'){$files+='gua-previous.exe'}
 foreach($name in $files){
     $path=Join-Path $installDir $name;if(Test-Path -LiteralPath $path){Remove-Item -LiteralPath $path}

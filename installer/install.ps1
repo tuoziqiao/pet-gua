@@ -72,6 +72,9 @@ if($oldPath -and (Test-Path -LiteralPath $oldPath) -and $oldPath -ne $backup -an
 Copy-Item -LiteralPath $sourcePath -Destination $exePath -Force
 if(Test-Path -LiteralPath (Join-Path $projectRoot 'THIRD_PARTY_NOTICES.txt')){Copy-Item -LiteralPath (Join-Path $projectRoot 'THIRD_PARTY_NOTICES.txt') -Destination $installDir -Force}
 if(Test-Path -LiteralPath (Join-Path $projectRoot 'LICENSE')){Copy-Item -LiteralPath (Join-Path $projectRoot 'LICENSE') -Destination $installDir -Force}
+$petNotice=Join-Path $projectRoot 'DESKTOP-PET-ASSETS.md'
+if(-not (Test-Path -LiteralPath $petNotice)){$petNotice=Join-Path $projectRoot 'docs\desktop-pet-assets.md'}
+if(Test-Path -LiteralPath $petNotice){Copy-Item -LiteralPath $petNotice -Destination (Join-Path $installDir 'DESKTOP-PET-ASSETS.md') -Force}
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'uninstall.ps1') -Destination $uninstallScript -Force
 foreach($path in $oldLinks){
     if($oldPath -and (Test-Path -LiteralPath $path) -and [string]::Equals($shell.CreateShortcut($path).TargetPath,$oldPath,[StringComparison]::OrdinalIgnoreCase)){Remove-Item -LiteralPath $path}

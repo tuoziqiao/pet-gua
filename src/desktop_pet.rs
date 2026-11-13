@@ -6,6 +6,8 @@ use eframe::egui::{self, Color32, Pos2, Rect, Sense, Stroke, Vec2};
 use std::time::{Duration, Instant};
 pub(crate) mod expressions;
 pub(crate) mod motion;
+mod animation;
+pub(crate) mod human;
 use expressions::{Animator, Context, Effect, Mouth, Pose};
 use motion::{BodyPose, Motion, MotionKind};
 pub(crate) use expressions::{Event, Preview};
@@ -89,11 +91,12 @@ fn paint(ui: &egui::Ui, rect: Rect, pose: Pose, body: BodyPose, color: DesktopPe
 }
 
 #[derive(Default)]
-pub struct DesktopPet { animator: Animator, motion: Motion, last_frame: Option<Instant>, initialized: bool, visible: bool, last_position: Option<(i32,i32)>, moved_at: Option<Instant>, pending_event: Option<Event>, pending_preview: Option<Preview>, pending_motion_preview: Option<MotionKind>, #[cfg(windows)] region_size: Option<(i32, i32)>, #[cfg(windows)] region_points: Option<Vec<(i32,i32)>>, #[cfg(windows)] drag: Option<Drag> }
+pub struct DesktopPet { human: human::Human, animator: Animator, motion: Motion, last_frame: Option<Instant>, initialized: bool, visible: bool, last_position: Option<(i32,i32)>, moved_at: Option<Instant>, pending_event: Option<Event>, pending_preview: Option<Preview>, pending_motion_preview: Option<MotionKind>, #[cfg(windows)] region_size: Option<(i32, i32)>, #[cfg(windows)] region_points: Option<Vec<(i32,i32)>>, #[cfg(windows)] drag: Option<Drag> }
 #[cfg(windows)]
 struct Drag { offset: (i32,i32), last_x: i32, delta_x: f32 }
 impl DesktopPet {
-    fn show(&mut self, ctx: &egui::Context, settings: &mut Settings, fullscreen: bool, context: Context, event: Option<Event>, preview: Option<Preview>, motion_preview: Option<MotionKind>) {
+    #[allow(dead_code)]
+    fn show_legacy(&mut self, ctx: &egui::Context, settings: &mut Settings, fullscreen: bool, context: Context, event: Option<Event>, preview: Option<Preview>, motion_preview: Option<MotionKind>) {
         if !settings.desktop_pet {
             #[cfg(windows)] if self.drag.take().is_some() { if let Some((pos,_))=native::window_geometry() { self.last_position=Some(pos); self.moved_at=Some(Instant::now()); } }
             if self.moved_at.take().is_some() {
@@ -242,7 +245,11 @@ impl crate::app::App {
         let event=self.desktop_pet_event.take();
         let preview=self.desktop_pet_preview.take();
         let motion_preview=self.desktop_pet_motion_preview.take();
-        desktop.show(ctx,&mut self.settings,fullscreen,context,event,preview,motion_preview);
+        let clip_preview=self.desktop_pet_clip_preview.take();
+        let command=self.desktop_pet_command.take();
+        let _=(preview,motion_preview);
+        desktop.human.show(ctx,&mut self.settings,fullscreen,context.animations,event,clip_preview,command);
+        self.desktop_pet_error=desktop.human.error_message();
     }
 }
 
@@ -251,7 +258,7 @@ mod native {
     use super::*;
     use windows::core::w;
     use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
-    use windows::Win32::Graphics::Gdi::{CombineRgn, CreatePolygonRgn, DeleteObject, GetMonitorInfoW, MonitorFromPoint, MonitorFromRect, OffsetRgn, SetWindowRgn, ALTERNATE, MONITORINFO, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY, RGN_OR};
+    use windows::Win32::Graphics::Gdi::{CombineRgn, CreatePolygonRgn, CreateRectRgn, DeleteObject, GetMonitorInfoW, MonitorFromPoint, MonitorFromRect, OffsetRgn, SetWindowRgn, ALTERNATE, MONITORINFO, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY, RGN_OR};
     use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
     use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
     use windows::Win32::UI::WindowsAndMessaging::*;
@@ -307,6 +314,18 @@ mod native {
     pub fn cursor_screen() -> Option<(i32,i32)> { let mut cursor=POINT::default(); unsafe { GetCursorPos(&mut cursor) }.ok()?; Some((cursor.x,cursor.y)) }
     pub fn left_button_down() -> bool { unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) < 0 } }
     pub fn move_to((x,y): (i32,i32)) { if let Some(hwnd)=hwnd() { unsafe { let _=SetWindowPos(hwnd,HWND_TOPMOST,x,y,0,0,SWP_NOSIZE|SWP_NOACTIVATE|SWP_NOZORDER); } } }
+    pub fn move_clamped((x,y):(i32,i32),(width,height):(i32,i32)) { unsafe {
+        let Some(hwnd)=hwnd() else { return; };
+        let mut current=RECT::default(); if GetWindowRect(hwnd,&mut current).is_err() {return;}
+        let monitor=MonitorFromRect(&current,MONITOR_DEFAULTTONEAREST);
+        let mut info=MONITORINFO { cbSize:std::mem::size_of::<MONITORINFO>() as u32,..Default::default() };
+        if GetMonitorInfoW(monitor,&mut info).as_bool() {
+            let work=info.rcWork;
+            let nx=x.clamp(work.left,(work.right-width).max(work.left));
+            let ny=y.clamp(work.top,(work.bottom-height).max(work.top));
+            let _=SetWindowPos(hwnd,HWND_TOPMOST,nx,ny,0,0,SWP_NOSIZE|SWP_NOACTIVATE|SWP_NOZORDER);
+        }
+    } }
     pub fn cursor_in_character(((left, top), (width, height)): ((i32, i32), (i32, i32)), cursor: (i32,i32)) -> Option<(Pos2,f32)> {
         if width <= 0 || height <= 0 { return None; }
         // 鼠标和窗口都以屏幕物理像素表示，避免跨显示器时混用 DPI。
@@ -327,6 +346,42 @@ mod native {
         let new_x = x.clamp(work.left, (work.right - width).max(work.left));
         let new_y = y.clamp(work.top, (work.bottom - height).max(work.top));
         let _ = SetWindowPos(hwnd, HWND_TOPMOST, new_x, new_y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
+    } }
+    pub fn force_visible((x,y):(i32,i32),(width,height):(i32,i32)) { unsafe {
+        let Some(hwnd)=hwnd() else { return; };
+        let rect=RECT { left:x, top:y, right:x.saturating_add(width), bottom:y.saturating_add(height) };
+        let mon=MonitorFromRect(&rect,MONITOR_DEFAULTTONEAREST);
+        let mut info=MONITORINFO { cbSize:std::mem::size_of::<MONITORINFO>() as u32,..Default::default() };
+        if GetMonitorInfoW(mon,&mut info).as_bool() {
+            let work=info.rcWork;
+            let nx=x.clamp(work.left,(work.right-width).max(work.left));
+            let ny=y.clamp(work.top,(work.bottom-height).max(work.top));
+            let _=SetWindowPos(hwnd,HWND_TOPMOST,nx,ny,0,0,SWP_NOSIZE|SWP_NOACTIVATE);
+        }
+    } }
+    pub fn set_alpha_region((width,height):(i32,i32),pixels:&[u8],dims:[usize;2],mirror:bool) { unsafe {
+        let Some(hwnd)=hwnd() else { return; };
+        let [w,h]=dims;
+        if w==0 || h==0 || width<=0 || height<=0 || pixels.len()!=w*h*4 { return; }
+        let region=CreateRectRgn(0,0,0,0);
+        if region.is_invalid() { return; }
+        let step=8usize;
+        for y in (0..h).step_by(step) {
+            let mut run=None;
+            for x in (0..=w).step_by(step) {
+                let occupied=x<w && (y..(y+step).min(h)).any(|yy| (x..(x+step).min(w)).any(|xx| pixels[(yy*w+if mirror {w-1-xx} else {xx})*4+3]>=16));
+                if occupied && run.is_none() { run=Some(x); }
+                if !occupied { if let Some(start)=run.take() {
+                    let l=(start as i64*width as i64/w as i64) as i32;
+                    let t=(y as i64*height as i64/h as i64) as i32;
+                    let r=((x.min(w) as i64*width as i64+w as i64-1)/w as i64) as i32;
+                    let b=(((y+step).min(h) as i64*height as i64+h as i64-1)/h as i64) as i32;
+                    let part=CreateRectRgn(l,t,r,b);
+                    if !part.is_invalid() { CombineRgn(region,region,part,RGN_OR); let _=DeleteObject(part); }
+                } }
+            }
+        }
+        if SetWindowRgn(hwnd,region,true)==0 { let _=DeleteObject(region); }
     } }
     pub fn region_points((width,height): (i32,i32), body: BodyPose) -> Vec<(i32,i32)> {
         if width<=0 || height<=0 { return Vec::new(); }

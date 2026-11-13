@@ -2075,22 +2075,15 @@ impl App {
                     12=>{
                         settings_label(ui,"桌宠显示");
                         settings_card(ui,|ui|{
-                            setting_row(ui,"桌宠模式","在桌面显示独立麻薯桌宠，可拖动和点击",&mut self.settings.desktop_pet);
+                            setting_row(ui,"桌宠模式","在桌面显示人形桌宠，可拖动和点击",&mut self.settings.desktop_pet);
                             ui.separator();
-                            setting_row(ui,"身体动作","呼吸、弹跳、摇摆和其他身体互动",&mut self.settings.desktop_pet_motion);
-                        });
-                        settings_label(ui,"身体动作预览");
-                        settings_card(ui,|ui|{
-                            let system_animations=crate::bar_layout::animations_enabled();
-                            if !self.settings.desktop_pet { ui.label("请先开启桌宠模式，再预览动作。"); }
-                            else if !self.settings.desktop_pet_motion { ui.label("请先开启身体动作，再预览动作。"); }
-                            else if !system_animations { ui.label("Windows 动画已关闭，开启后可预览身体动作。"); }
-                            ui.add_enabled_ui(self.settings.desktop_pet && self.settings.desktop_pet_motion && system_animations,|ui|{
-                                ui.horizontal_wrapped(|ui|{
-                                    for (kind,label) in crate::desktop_pet::motion::MOTIONS {
-                                        if ui.button(label).clicked() { self.desktop_pet_motion_preview=Some(kind); }
-                                    }
-                                });
+                            setting_row(ui,"桌宠动画","关闭后显示静态待机画面",&mut self.settings.desktop_pet_motion);
+                            if let Some(error)=&self.desktop_pet_error { ui.colored_label(Color32::RED,error); }
+                            ui.horizontal_wrapped(|ui|{
+                                let can_animate=self.settings.desktop_pet && self.settings.desktop_pet_motion && crate::bar_layout::animations_enabled();
+                                if ui.add_enabled(can_animate,egui::Button::new("睡觉")).clicked() { self.desktop_pet_command=Some(crate::desktop_pet::human::Command::Sleep); }
+                                if ui.add_enabled(can_animate,egui::Button::new("唤醒")).clicked() { self.desktop_pet_command=Some(crate::desktop_pet::human::Command::Wake); }
+                                if ui.add_enabled(self.settings.desktop_pet,egui::Button::new("回到屏幕内")).clicked() { self.desktop_pet_command=Some(crate::desktop_pet::human::Command::Recenter); }
                             });
                         });
                         settings_label(ui,"大小");
@@ -2099,60 +2092,18 @@ impl App {
                             ui.spacing_mut().slider_width=(ui.available_width()-80.0).clamp(100.0,340.0);
                             ui.add(egui::Slider::new(&mut self.settings.desktop_pet_size_pct,crate::model::DESKTOP_PET_MIN_SIZE..=crate::model::DESKTOP_PET_MAX_SIZE).step_by(1.0).suffix("%"));
                         });
-                        settings_label(ui,"主题颜色");
+                        settings_label(ui,"动作预览");
                         settings_card(ui,|ui|{
-                            ui.horizontal_wrapped(|ui|{
-                                for color in crate::model::DesktopPetColor::ALL {
-                                    let selected=self.settings.desktop_pet_color==color;
-                                    let label=format!("    {}",color.label());
-                                    let button=egui::Button::new(egui::RichText::new(label).size(12.0))
-                                        .fill(if selected { settings_color(ctx,Color32::from_rgb(72,72,76),Color32::WHITE) } else { Color32::TRANSPARENT })
-                                        .stroke(if selected {egui::Stroke::new(1.5,Color32::from_rgb(90,155,230))} else {egui::Stroke::new(1.0,settings_color(ctx,Color32::from_gray(85),Color32::from_gray(205)))})
-                                        .corner_radius(7.0);
-                                    let response=ui.add_sized([94.0,36.0],button);
-                                    let [r,g,b]=color.rgb();
-                                    ui.painter().circle_filled(egui::pos2(response.rect.left()+13.0,response.rect.center().y),7.0,Color32::from_rgb(r,g,b));
-                                    if selected {
-                                        let center=egui::pos2(response.rect.right()-11.0,response.rect.center().y);
-                                        ui.painter().line(vec![center+egui::vec2(-4.0,0.0),center+egui::vec2(-1.0,3.0),center+egui::vec2(4.0,-3.0)],egui::Stroke::new(1.5,Color32::from_rgb(90,155,230)));
-                                    }
-                                    if response.clicked() {self.settings.desktop_pet_color=color;}
+                            if !self.settings.desktop_pet { ui.label("请先开启桌宠模式。"); }
+                            else if !self.settings.desktop_pet_motion || !crate::bar_layout::animations_enabled() { ui.label("请先开启桌宠动画和 Windows 动画。"); }
+                            ui.add_enabled_ui(self.settings.desktop_pet && self.settings.desktop_pet_motion && crate::bar_layout::animations_enabled(),|ui|{
+                                for (label,indices) in crate::desktop_pet::human::CATEGORIES {
+                                    ui.collapsing(*label,|ui|{
+                                        ui.horizontal_wrapped(|ui|{
+                                            for &index in *indices { if ui.button(crate::desktop_pet::human::clip_name(index)).clicked() { self.desktop_pet_clip_preview=Some(index); } }
+                                        });
+                                    });
                                 }
-                            });
-                        });
-                        settings_label(ui,"表情预览");
-                        settings_card(ui,|ui|{
-                            if !self.settings.desktop_pet { ui.label("请先开启桌宠模式，再预览表情。"); }
-                            ui.add_enabled_ui(self.settings.desktop_pet,|ui|{
-                                ui.label(egui::RichText::new("表情").size(13.0).strong());
-                                ui.horizontal_wrapped(|ui|{
-                                    for expression in crate::pet_expressions::Expression::ALL {
-                                        if ui.button(expression.label()).clicked() { self.desktop_pet_preview=Some(crate::desktop_pet::Preview::Expression(expression)); }
-                                    }
-                                });
-                                ui.add_space(5.0);
-                                ui.label(egui::RichText::new("状态").size(13.0).strong());
-                                ui.horizontal_wrapped(|ui|{
-                                    for (state,label) in crate::desktop_pet::expressions::STATES {
-                                        if ui.button(label).clicked() { self.desktop_pet_preview=Some(crate::desktop_pet::Preview::State(state)); }
-                                    }
-                                });
-                                ui.add_space(5.0);
-                                ui.label(egui::RichText::new("天气").size(13.0).strong());
-                                ui.horizontal_wrapped(|ui|{
-                                    for (kind,label) in crate::desktop_pet::expressions::WEATHER {
-                                        for (day,suffix) in [(true,"日"),(false,"夜")] {
-                                            if ui.button(format!("{label}·{suffix}")).clicked() { self.desktop_pet_preview=Some(crate::desktop_pet::Preview::Weather(kind,day)); }
-                                        }
-                                    }
-                                });
-                                ui.add_space(5.0);
-                                ui.label(egui::RichText::new("听歌动作").size(13.0).strong());
-                                ui.horizontal_wrapped(|ui|{
-                                    for (pose,label) in crate::desktop_pet::expressions::MUSIC {
-                                        if ui.button(label).clicked() { self.desktop_pet_preview=Some(crate::desktop_pet::Preview::Music(pose)); }
-                                    }
-                                });
                             });
                         });
                     }

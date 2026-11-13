@@ -364,8 +364,11 @@ Section "安装"
   SetOutPath "$INSTDIR"
   SetOverwrite on
   File /oname=${APP_PACKAGE}.exe "${SOURCE_EXE}"
-  File "${PROJECT_DIR}\LICENSE"
+  !if /FileExists "${PROJECT_DIR}\LICENSE"
+    File "${PROJECT_DIR}\LICENSE"
+  !endif
   File "${PROJECT_DIR}\THIRD_PARTY_NOTICES.txt"
+  File /oname=DESKTOP-PET-ASSETS.md "${PROJECT_DIR}\docs\desktop-pet-assets.md"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   ${If} $PreviousPath != ""
   ${AndIf} $PreviousShortcut != ""
@@ -447,6 +450,7 @@ Section "Uninstall"
   ${EndIf}
   Delete "$INSTDIR\LICENSE"
   Delete "$INSTDIR\THIRD_PARTY_NOTICES.txt"
+  Delete "$INSTDIR\DESKTOP-PET-ASSETS.md"
   Delete "$INSTDIR\Uninstall.exe"
   ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${APP_ID}"
   ${If} $0 == '"$INSTDIR\${APP_PACKAGE}.exe"'

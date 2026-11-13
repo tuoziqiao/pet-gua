@@ -16,6 +16,7 @@ try {
         $Executable = Join-Path $targetDirectory 'x86_64-pc-windows-msvc\release\gua.exe'
     }
     $binary = Get-Item -LiteralPath $Executable
+    if ($binary.Length -gt 200MB) { throw 'Executable exceeds the 200 MiB update limit.' }
     & (Join-Path $PSScriptRoot 'check-runtime.ps1') -Executable $binary.FullName
     if ($binary.VersionInfo.FileVersion -ne $version -and $binary.VersionInfo.FileVersion -ne "$version.0") { throw 'Executable version mismatch' }
     if ($binary.VersionInfo.FileDescription -cne $brand.DisplayName -or
@@ -73,9 +74,14 @@ try {
     New-Item -ItemType Directory -Path $stagingDirectory -Force | Out-Null
     Copy-Item -LiteralPath $binary.FullName -Destination (Join-Path $stagingDirectory ($brand.PackageName + '.exe'))
     # ZIP 保留给免安装使用和应用内更新；普通用户只需下载安装 EXE。
-    @('LICENSE','THIRD_PARTY_NOTICES.txt') | ForEach-Object {
-        Copy-Item -LiteralPath (Join-Path $projectRoot $_) -Destination $stagingDirectory -Recurse
+    Copy-Item -LiteralPath (Join-Path $projectRoot 'THIRD_PARTY_NOTICES.txt') -Destination $stagingDirectory
+    $projectLicense = Join-Path $projectRoot 'LICENSE'
+    if (Test-Path -LiteralPath $projectLicense -PathType Leaf) {
+        Copy-Item -LiteralPath $projectLicense -Destination $stagingDirectory
+    } else {
+        Write-Warning '项目根目录没有 LICENSE，本次安装包和便携包将不包含该文件。'
     }
+    Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\desktop-pet-assets.md') -Destination (Join-Path $stagingDirectory 'DESKTOP-PET-ASSETS.md')
     $setup = Join-Path $outputDirectory $setupName
     $brandInclude = Join-Path $stagingDirectory 'branding.nsh'
     $nameLiteral = ConvertTo-NsisLiteral $brand.DisplayName
@@ -88,6 +94,7 @@ try {
     Remove-Item -LiteralPath $brandInclude
     $archive = Join-Path $outputDirectory $archiveName
     Compress-Archive -LiteralPath $stagingDirectory -DestinationPath $archive
+    if ((Get-Item -LiteralPath $archive).Length -gt 200MB) { throw 'Update ZIP exceeds the 200 MiB update limit.' }
     @($setup, $archive) | ForEach-Object {
         $checksum = (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant()
         "$checksum  $([IO.Path]::GetFileName($_))"
